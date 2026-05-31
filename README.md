@@ -1,4 +1,4 @@
-# Tri-Modal BEV VLA Planner Design Book / 設計書
+# Tri-Modal BEV VLA Planner Design Book
 
 ## Structured End-to-End Architecture for Real-Vehicle Autonomous Driving / 実車適用を見据えたStructured End-to-End自動運転アーキテクチャ
 
