@@ -215,8 +215,6 @@ Handling Imbalance:
   - Dynamic cells are approximately 5-10% of all cells -> Focal Loss + positive-weight sampling
   - bev_agent_vel loss is computed only on dynamic cells
 
-References: PredRNN (NeurIPS 2017), FlowNet3D (CVPR 2019),
-            Waymo Open Dataset occupancy flow challenge
 ```
 
 ### Why Both Agent Detection and Occupancy Flow Are Needed
@@ -290,8 +288,6 @@ Losses:
   - Ground truth: bev_agent_occ of future frames in logs,
                   or use Agent Future Predictor output as soft target
 
-References: Occupancy Flow (ICCV 2021, Waymo),
-            PowerBEV (ICCV 2023), Tesla Occupancy Networks
 ```
 
 ### Division of Roles with Agent Detection
@@ -357,11 +353,6 @@ From a single current frame, the following cannot be determined:
 -> Holding it as GRU hidden state inside the module is the appropriate design:
   - From the outside, the interface is simple: just pass the current frame
   - Handling of occlusion and new agents is completed within the module
-
-References: Trajectron++ (Ivanovic & Pavone, ECCV 2020)
-            Social-LSTM (Alahi et al., CVPR 2016)
-            MOTR (Zeng et al., ECCV 2022) -- continuous retention of track queries across frames
-            StreamPETR (Wang et al., ICCV 2023) -- streaming propagation of object queries
 ```
 
 ### Model Architecture (Recurrent + Multi-mode Decoder)
@@ -409,11 +400,6 @@ Training:
   - minADE/minFDE loss, NLL loss for mode_scores,
     physical consistency penalty for velocity and acceleration
 
-Reference Architectures:
-  - Trajectron++ (ECCV 2020): Conditional VAE + GRU per-agent hidden state
-  - Social-LSTM (CVPR 2016): Pool LSTM hidden states of each pedestrian
-  - MOTR (ECCV 2022): Continuous retention of track queries across frames
-  - StreamPETR (ICCV 2023): Streaming propagation of object queries
 ```
 
 ### Importance of Multi-modal Prediction
