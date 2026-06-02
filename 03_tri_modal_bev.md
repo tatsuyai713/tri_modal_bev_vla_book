@@ -255,6 +255,66 @@ Radar欠損:
 | BEVFormer Temporal Attention | 過去フレームのBEVを自己注意で参照 | 柔軟、精度高 |
 | Sparse Temporal Token | 重要なBEV tokenのみを保持し再利用 | 計算効率 |
 
+---
+
+### 3.6.1 標識・路面標識認識HeadとSpeed Constraint Token
+
+速度制限の判断を安定化するため、Tri-modal BEVの上に標識認識専用Headを追加する。  
+対象は「道路標識（交通標識）」「路面標示（路面標識）」の両方であり、認識結果はPlannerに直接使わず、**制約トークン（Speed Constraint Token）**として渡す。
+
+### 認識対象
+
+```text
+対象カテゴリ:
+  - 速度制限標識（例: 30, 40, 50, 60 km/h）
+  - 速度制限解除標識
+  - 学校区域・工事区間などの補助標識
+  - 路面の速度表示（数字、ゾーン表示）
+  - 一時停止・進入禁止など速度計画に影響する規制標識
+```
+
+### Head構成（推奨）
+
+```text
+入力:
+  - Camera特徴（高解像度）
+  - BEV fused特徴（位置整合）
+
+出力:
+  sign_boxes:          標識2D/3D候補
+  sign_class:          標識クラス
+  sign_speed_limit:    速度制限値 [m/s]
+  sign_confidence:     信頼度
+  road_mark_speed:     路面標示由来の速度制限値 [m/s]
+  road_mark_confidence: 信頼度
+```
+
+### Token化とPlannerへの受け渡し
+
+```text
+Speed Constraint Token (T_speed_env):
+  fields:
+    source_priority: [map, sign, road_mark]
+    legal_speed_limit_mps
+    temporary_speed_limit_mps
+    confidence
+    ttl_frames
+
+Plannerへの入力:
+  CondFormerに T_speed_env を追加し、
+  軌跡候補と速度プロファイル生成の両方を条件付けする。
+```
+
+### 研究・実装上の注意
+
+```text
+- 速度標識は見落としと誤検出が安全上クリティカルなため、
+  単フレーム判定ではなく時系列安定化（Nフレーム投票、TTL）を使う。
+- Map速度と標識速度が矛盾する場合は、保守側（低い速度）を優先し、
+  外部評価器で最終確定する。
+- 夜間・逆光・雨天で標識信頼度が下がるため、confidenceを必ず出力する。
+```
+
 ### Ego Motion Warp
 
 過去フレームのBEVを現在フレームに合わせるため、ego motionでwarpする必要がある。
@@ -401,7 +461,7 @@ bev_uncertainty: [B, H, W]
   - 外部評価器の重要な入力
 ```
 
-### ストップライン・横断歩道 Head
+### ストップライン・横断歩道・信号機 Head
 
 ```text
 bev_stopline: [B, H, W]
@@ -411,6 +471,21 @@ bev_stopline: [B, H, W]
 bev_crosswalk: [B, H, W]
   - 横断歩道の存在確率
   - 歩行者対応の重要な入力
+
+traffic_light_head:
+  - traffic_light_boxes: 信号機の2D/3D候補
+  - traffic_light_state: RED / YELLOW / GREEN / ARROW / UNKNOWN
+  - traffic_light_confidence: 状態推定の信頼度
+  - controlled_lane_ids: どのLaneNode/停止線に対応する信号か
+  - time_since_seen: 一時遮蔽時のTTL管理
+```
+
+```text
+設計上の注意:
+  - 信号機は「検出」だけでなく、停止線・LaneNodeとの対応付けが重要
+  - 矢印信号は進行方向ごとに有効/無効が変わるため、direction付きでToken化する
+  - 逆光・大型車遮蔽・夜間の誤認識を考慮し、Temporal Memoryで状態を安定化する
+  - 信号状態がUNKNOWNまたは低信頼度の場合、External Evaluatorは保守側に倒す
 ```
 
 ### Agent Detection Head（3D物体検出）

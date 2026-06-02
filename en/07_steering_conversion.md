@@ -43,6 +43,8 @@ Inputs:
 Outputs:
   target_curvature:     float32, 1/m (curvature)
   target_speed:         float32, m/s
+  target_accel:         float32, m/s^2
+  speed_phase:          enum (ACCEL / CRUISE / DECEL)
   target_steer_angle:   float32, rad (optional, vehicle specific)
   limit_steer:          bool (steering angle limit flag)
   limit_accel:          bool (acceleration limit flag)
@@ -79,9 +81,11 @@ def control_cycle(selected_traj, ego_state, vehicle_params):
     kappa_smooth = alpha_filter(kappa, prev_kappa, alpha=0.3)
     
     # Step 7: Lateral acceleration limit
-    a_y = ego_state.speed**2 * kappa_smooth
-    if abs(a_y) > A_Y_MAX:
-        kappa_smooth = sign(kappa_smooth) * A_Y_MAX / max(ego_state.speed**2, 0.01)
+    # Planned: a_y_plan = v^2 * kappa, measurement-based: a_y_meas = v * yaw_rate
+    a_y_plan = ego_state.speed**2 * kappa_smooth
+    a_y_meas = ego_state.speed * ego_state.yaw_rate
+    if max(abs(a_y_plan), abs(a_y_meas)) > A_Y_MAX:
+      kappa_smooth = sign(kappa_smooth) * A_Y_MAX / max(ego_state.speed**2, 0.01)
     
     # Step 8: Convert to steering angle via bicycle model
     steer_angle = bicycle_model_to_steer(kappa_smooth, vehicle_params)
@@ -93,9 +97,15 @@ def control_cycle(selected_traj, ego_state, vehicle_params):
     # Step 10: Log
     log_control_cycle(kappa_smooth, steer_angle, ego_state, ...)
     
+    speed_cmd = resolve_target_speed(aligned_traj, ego_state, speed_constraints)
+    accel_cmd = resolve_target_accel(aligned_traj, ego_state, speed_constraints)
+    accel_cmd = apply_jerk_limit(accel_cmd, prev_accel, JERK_MAX)
+
     return ControlCommand(
         target_curvature=kappa_smooth,
-        target_speed=target_speed_from_traj(aligned_traj),
+        target_speed=speed_cmd.target_speed,
+        target_accel=accel_cmd.target_accel,
+        speed_phase=accel_cmd.phase,
         target_steer_angle=steer_angle,
         feasibility_ok=True
     )
@@ -303,6 +313,83 @@ Signal response:
   target_speed = v_profile_for_stop(stopline_dist, current_speed)
 ```
 
+### Rule-Based Priority for Speed Constraints
+
+```text
+Input sources:
+  1) Legal speed limits (map/sign/road-marking fused)
+  2) User GUI overspeed tolerance
+  3) Comfort and vehicle limits (a_x, a_y, jerk)
+  4) Lead-vehicle following cap (ACC)
+
+Decision flow:
+  base_limit = min(valid_map_limit, valid_sign_limit, valid_road_mark_limit)
+  user_margin = clamp(user_overspeed_tolerance, 0, policy_margin_max)
+  legal_cap = min(base_limit, base_limit + user_margin)
+  comfort_cap = speed_from_curvature(kappa, a_y_max)
+  follow_cap = acc_following_cap(lead_vehicle_state)
+  final_target_speed = min(planner_speed, legal_cap, comfort_cap, follow_cap)
+
+  target_accel converges to final_target_speed, and speed_phase is derived from
+  the sign of target_accel (ACCEL / CRUISE / DECEL).
+```
+
+### Lateral-G, Yaw-Rate, and Jerk Constraints
+
+Even when the Planner is learned, the final vehicle commands must be monitored as physical quantities. The Converter evaluates lateral acceleration using both trajectory curvature and measured yaw rate.
+
+```text
+Lateral acceleration:
+  a_y_plan = v_target^2 * kappa_target
+  a_y_meas = ego_speed * ego_yaw_rate
+  a_y_eval = max(|a_y_plan|, |a_y_meas|)
+
+Constraint:
+  a_y_eval <= A_Y_MAX
+  Example: comfort range 2.0-3.0 m/s^2, with a separate emergency cap
+```
+
+```text
+Longitudinal jerk:
+  jerk_x = (target_accel - prev_target_accel) / dt
+
+Lateral jerk:
+  jerk_y = (a_y_eval - prev_a_y_eval) / dt
+
+Constraints:
+  |jerk_x| <= JERK_X_MAX
+  |jerk_y| <= JERK_Y_MAX
+
+Processing:
+  - Smooth target_accel with a jerk limit
+  - Smooth kappa / steer_angle with rate limits
+  - Reduce target_speed if constraints are still exceeded
+  - If still infeasible, set feasibility_ok=False and return to the External Evaluator
+```
+
+```python
+def apply_dynamics_constraints(kappa, target_speed, target_accel, ego_state, dt):
+    a_y_plan = target_speed**2 * kappa
+    a_y_meas = ego_state.speed * ego_state.yaw_rate
+    a_y_eval = max(abs(a_y_plan), abs(a_y_meas))
+
+    if a_y_eval > A_Y_MAX:
+        target_speed = min(target_speed, sqrt(A_Y_MAX / max(abs(kappa), 1e-4)))
+
+    target_accel = clamp_rate(
+        target_accel,
+        prev_value=prev_target_accel,
+        max_rate=JERK_X_MAX,
+        dt=dt,
+    )
+
+    jerk_y = (a_y_eval - prev_a_y_eval) / dt
+    if abs(jerk_y) > JERK_Y_MAX:
+        kappa = clamp_rate(kappa, prev_kappa, KAPPA_RATE_MAX, dt)
+
+    return kappa, target_speed, target_accel
+```
+
 ---
 
 ## 7.13 Values to Log
@@ -319,8 +406,13 @@ Log per control cycle:
   actual_steer_angle (EPS feedback)
   steer_error = target - actual
   target_speed
+  target_accel
+  speed_phase
   actual_speed
   a_y = speed^2 * kappa
+  a_y_meas = speed * yaw_rate
+  jerk_x
+  jerk_y
   feasibility_ok
   fallback_active
   infeasible_reason (if any)

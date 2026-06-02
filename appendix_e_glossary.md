@@ -48,6 +48,8 @@
 | Converter | - | 軌跡をステアリング角に変換する決定論的モジュール |
 | Evaluator | - | K候補軌跡の安全性を評価して選択する外部モジュール |
 | K candidates | K候補軌跡 | Plannerが並列生成するK本の軌跡 |
+| K-query VLA Planner | - | K個の学習可能クエリを持つTransformer Decoder型の軌跡生成Planner。MHP Lossで学習するMVP実装 |
+| DiffusionDrive | - | 条件付き拡散モデルによる軌跡生成手法（NVIDIA, NeurIPS 2024）。K-query Plannerの発展形として採用 |
 | Fallback | - | 通常計画が失敗した際の安全な代替行動 |
 | TTC | Time-to-Collision | 衝突までの推定時間 |
 | THW | Time Headway | 前走車との時間距離 |

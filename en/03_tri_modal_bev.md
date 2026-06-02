@@ -410,7 +410,7 @@ bev_uncertainty: [B, H, W]
   - An important input to the external evaluator
 ```
 
-### Stopline and Crosswalk Heads
+### Stopline, Crosswalk, and Traffic Light Heads
 
 ```text
 bev_stopline: [B, H, W]
@@ -420,6 +420,49 @@ bev_stopline: [B, H, W]
 bev_crosswalk: [B, H, W]
   - Probability of crosswalk presence
   - Important input for pedestrian handling
+
+traffic_light_head:
+  - traffic_light_boxes: 2D/3D traffic light candidates
+  - traffic_light_state: RED / YELLOW / GREEN / ARROW / UNKNOWN
+  - traffic_light_confidence: confidence of state estimation
+  - controlled_lane_ids: signal-to-LaneNode / signal-to-stopline association
+  - time_since_seen: TTL handling under temporary occlusion
+```
+
+```text
+Design notes:
+  - Traffic lights require not only detection, but also association with stop lines and LaneNodes.
+  - Arrow signals must be tokenized with direction because validity depends on maneuver direction.
+  - Stabilize state with Temporal Memory under glare, occlusion by large vehicles, and night scenes.
+  - When state is UNKNOWN or low-confidence, the External Evaluator should behave conservatively.
+```
+
+### Traffic Sign and Road-Marking Speed Head
+
+```text
+speed_sign_head outputs:
+  sign_speed_limit_mps: [B, N_sign]
+  sign_confidence: [B, N_sign]
+
+road_marking_head outputs:
+  road_mark_speed_limit_mps: [B, N_mark]
+  road_mark_confidence: [B, N_mark]
+
+Tokenization for Planner:
+  T_speed_env = {
+    legal_speed_limit_mps,
+    temporary_speed_limit_mps,
+    source_priority: [map, sign, road_mark],
+    confidence,
+    ttl_frames
+  }
+```
+
+```text
+Operational notes:
+  - Use temporal stabilization (N-frame voting / TTL), not single-frame decisions
+  - If map/sign/road-marking conflict, use conservative arbitration first
+  - Final speed acceptance is done in the rule-based external evaluator
 ```
 
 ### Agent Detection Head (3D Object Detection)

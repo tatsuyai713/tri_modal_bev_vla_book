@@ -39,13 +39,77 @@ Checklist:
   - Dynamic Risk Map risk value < threshold
   - Within drivable area
   - Within speed limit
-  - Acceleration and curvature within comfort range
-  - Satisfies stop line and crosswalk constraints
+  - Acceleration, curvature, lateral-G, and jerk within comfort range
+  - Satisfies traffic light, stop line, and crosswalk constraints
+  - Stopline precision and stopped following gap are within target range
   - Within ODD
+  - Passes final rule-based speed evaluation (map/sign/road-marking/user settings)
 
 MRM (Minimum Risk Maneuver):
   - Continue driving at safe speed, or perform safe stop
   - A module that requires human design and verification
+```
+
+### Final Rule-Based Speed Evaluation
+
+```text
+Purpose:
+  Do not execute learned speed output directly.
+  Apply explicit rule checks with legal, map, perception, and user inputs.
+
+Inputs:
+  - map speed limit
+  - sign-head speed limit
+  - road-marking-head speed limit
+  - user GUI overspeed tolerance
+
+Evaluation:
+  legal_limit = min(valid_map, valid_sign, valid_road_mark)
+  user_margin = clamp(overspeed_tolerance, 0, policy_margin_max)
+  operational_cap = min(legal_limit, legal_limit + user_margin)
+
+  If candidate speed profile v(t) exceeds operational_cap, mark candidate as Fail.
+```
+
+### Lateral-G and Jerk Evaluation
+
+```text
+The External Evaluator checks Planner and Converter outputs using physical quantities.
+
+Lateral-G:
+  a_y_plan = v_target^2 * kappa_target
+  a_y_meas = ego_speed * ego_yaw_rate
+  a_y_eval = max(|a_y_plan|, |a_y_meas|)
+
+Jerk:
+  jerk_x = delta target_accel / delta t
+  jerk_y = delta a_y_eval / delta t
+
+Decision:
+  - a_y_eval > A_Y_MAX is Fail or heavily penalized
+  - |jerk_x| > JERK_X_MAX is Fail or heavily penalized
+  - |jerk_y| > JERK_Y_MAX is Fail or heavily penalized
+  - Thresholds should be separated for normal comfort and emergency avoidance
+```
+
+### Traffic Light, Stopline, and Stopped-Gap Evaluation
+
+```text
+Traffic light evaluation:
+  - Candidates crossing the stop line on RED are Fail
+  - Turning candidates without a valid directional ARROW are Fail
+  - On YELLOW, stop if within stopping distance; otherwise avoid harsh braking inside the intersection
+  - UNKNOWN or low-confidence signal state triggers conservative deceleration / prepare-to-stop behavior
+
+Stopline precision:
+  target_stop_x = stopline_x - stop_margin_m
+  stop_position_error = planned_stop_x - target_stop_x
+  |stop_position_error| > STOP_POS_TOL is Fail or heavily penalized
+
+Stopped following gap:
+  desired_stop_gap = max(min_gap_m, time_gap_s * ego_speed)
+  actual_stop_gap = lead_vehicle_x - planned_stop_x
+  actual_stop_gap < desired_stop_gap is Fail
 ```
 
 ---

@@ -204,7 +204,7 @@ flowchart LR
 | Lane Topology Branch | MapTR, TopoNet, LaneSegNet |
 | Dynamic Object Branch | UniAD (motion prediction) |
 | Agent Future Predictor | UniAD, Wayformer, MotionDiffuser |
-| VLA Planner | UniAD planner, DiffusionDrive |
+| VLA Planner | UniAD planner, K-query VLA Planner (→ DiffusionDrive) |
 | Language Conditioning | DriveLM, VLM-AD, CLIP, LLaVA |
 | External Evaluator | PDM-Closed (nuPlan) style |
 | Trajectory Converter | Reference: openpilot/sunnypilot pure-pursuit control |

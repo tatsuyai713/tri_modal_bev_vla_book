@@ -39,13 +39,77 @@
   - Dynamic Risk Map のリスク値 < 閾値
   - 走行可能域内
   - 速度制限内
-  - 加速度・曲率が快適性範囲内
-  - 停止線・横断歩道の制約を満たす
+  - 加速度・曲率・横G・ジャークが快適性範囲内
+  - 信号機・停止線・横断歩道の制約を満たす
+  - 停止線停止精度と停止時車間が目標範囲内
   - ODD内
+  - 最終ルールベース速度評価を通過（map/sign/road_mark/user設定の統合）
 
 MRM (Minimum Risk Maneuver):
   - 安全な速度での走行継続 or 安全停車
   - 人手での設計・検証が必要なモジュール
+```
+
+### 最終ルールベース速度評価
+
+```text
+目的:
+  学習モデルの提案速度を、そのまま採用せず、
+  法規・地図・認識・ユーザー設定の整合をとって最終評価する。
+
+入力:
+  - map由来の速度上限
+  - 標識Head由来の速度上限
+  - 路面標識Head由来の速度上限
+  - ユーザーGUIの overspeed tolerance
+
+評価:
+  legal_limit = min(valid_map, valid_sign, valid_road_mark)
+  user_margin = clamp(overspeed_tolerance, 0, policy_margin_max)
+  operational_cap = min(legal_limit, legal_limit + user_margin)
+
+  候補軌跡の速度プロファイル v(t) が operational_cap を超える場合は Fail。
+```
+
+### 横G・ジャーク評価
+
+```text
+External Evaluator は、PlannerやConverterの出力を次の物理量で検査する。
+
+横G:
+  a_y_plan = v_target^2 * kappa_target
+  a_y_meas = ego_speed * ego_yaw_rate
+  a_y_eval = max(|a_y_plan|, |a_y_meas|)
+
+ジャーク:
+  jerk_x = Δtarget_accel / Δt
+  jerk_y = Δa_y_eval / Δt
+
+判定:
+  - a_y_eval > A_Y_MAX は Fail または強い減点
+  - |jerk_x| > JERK_X_MAX は Fail または強い減点
+  - |jerk_y| > JERK_Y_MAX は Fail または強い減点
+  - 閾値は通常快適域と緊急回避域を分けて管理する
+```
+
+### 信号機・停止線・停止時車間評価
+
+```text
+信号機評価:
+  - RED で停止線を越える候補は Fail
+  - 該当方向のARROWがない右左折候補は Fail
+  - YELLOW は停止可能距離内なら停止、停止不能なら交差点内急制動を避ける
+  - UNKNOWNまたは低信頼度の場合は保守側（減速・停止準備）へ倒す
+
+停止線停止精度:
+  target_stop_x = stopline_x - stop_margin_m
+  stop_position_error = planned_stop_x - target_stop_x
+  |stop_position_error| > STOP_POS_TOL は Fail または強い減点
+
+停止時車間:
+  desired_stop_gap = max(min_gap_m, time_gap_s * ego_speed)
+  actual_stop_gap = lead_vehicle_x - planned_stop_x
+  actual_stop_gap < desired_stop_gap は Fail
 ```
 
 ---

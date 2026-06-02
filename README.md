@@ -48,6 +48,8 @@ The central idea is **Structured End-to-End**: keep the learning flexibility of 
 | 12 | `12_data_collection.md` | Data Collection, Fleet Learning, and Annotation Pipeline | データ収集・フリート学習・アノテーションパイプライン |
 | 13 | `13_evaluation_metrics.md` | Evaluation Metrics, Benchmarks, and Scenario Design | 評価指標・ベンチマーク・シナリオ設計 |
 | 14 | `14_hardware_platform.md` | Hardware Platforms, Quantization, and OTA Deployment | ハードウェアプラットフォーム・量子化・OTA展開 |
+| 15 | `15_middleware_os.md` | Middleware and OS: From Research Stack to Production Stack | MiddlewareとOS ―― 研究スタックから製品スタックまで |
+| 16 | `16_system_integration_summary.md` | System Integration Summary and Full Architecture Overview | システム統合サマリーとアーキテクチャ全体像 |
 | A | `appendix_a_pseudocode.md` | Forward-Pass Pseudocode | Forward疑似コード |
 | B | `appendix_b_output_format.md` | Output Format Specification | 出力フォーマット定義 |
 | C | `appendix_c_references.md` | OSS Repositories and Papers | 参考OSS・論文一覧 |

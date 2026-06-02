@@ -43,6 +43,8 @@ Converter の役割:
 出力:
   target_curvature:     float32, 1/m (曲率)
   target_speed:         float32, m/s
+  target_accel:         float32, m/s^2
+  speed_phase:          enum (ACCEL / CRUISE / DECEL)
   target_steer_angle:   float32, rad (optional, vehicle specific)
   limit_steer:          bool (舵角制限フラグ)
   limit_accel:          bool (加速度制限フラグ)
@@ -79,9 +81,11 @@ def control_cycle(selected_traj, ego_state, vehicle_params):
     kappa_smooth = alpha_filter(kappa, prev_kappa, alpha=0.3)
     
     # Step 7: 横加速度の制限
-    a_y = ego_state.speed**2 * kappa_smooth
-    if abs(a_y) > A_Y_MAX:
-        kappa_smooth = sign(kappa_smooth) * A_Y_MAX / max(ego_state.speed**2, 0.01)
+    # 計画値: a_y_plan = v^2 * kappa、実測寄り: a_y_meas = v * yaw_rate
+    a_y_plan = ego_state.speed**2 * kappa_smooth
+    a_y_meas = ego_state.speed * ego_state.yaw_rate
+    if max(abs(a_y_plan), abs(a_y_meas)) > A_Y_MAX:
+      kappa_smooth = sign(kappa_smooth) * A_Y_MAX / max(ego_state.speed**2, 0.01)
     
     # Step 8: 二輪モデルで舵角に変換
     steer_angle = bicycle_model_to_steer(kappa_smooth, vehicle_params)
@@ -93,9 +97,15 @@ def control_cycle(selected_traj, ego_state, vehicle_params):
     # Step 10: ログ
     log_control_cycle(kappa_smooth, steer_angle, ego_state, ...)
     
+    speed_cmd = resolve_target_speed(aligned_traj, ego_state, speed_constraints)
+    accel_cmd = resolve_target_accel(aligned_traj, ego_state, speed_constraints)
+    accel_cmd = apply_jerk_limit(accel_cmd, prev_accel, JERK_MAX)
+
     return ControlCommand(
         target_curvature=kappa_smooth,
-        target_speed=target_speed_from_traj(aligned_traj),
+        target_speed=speed_cmd.target_speed,
+        target_accel=accel_cmd.target_accel,
+        speed_phase=accel_cmd.phase,
         target_steer_angle=steer_angle,
         feasibility_ok=True
     )
@@ -302,6 +312,83 @@ Plannerへの利用:
   target_speed = v_profile_for_stop(stopline_dist, current_speed)
 ```
 
+### 速度制約の優先順位（ルールベース）
+
+```text
+入力ソース:
+  1) 法規速度（map/sign/road_mark統合）
+  2) ユーザーGUI許容値（overspeed tolerance）
+  3) 快適性・車両限界（a_x, a_y, jerk）
+  4) 先行車追従制約（ACC）
+
+決定手順:
+  base_limit = min(valid_map_limit, valid_sign_limit, valid_road_mark_limit)
+  user_margin = clamp(user_overspeed_tolerance, 0, policy_margin_max)
+  legal_cap = min(base_limit, base_limit + user_margin)
+  comfort_cap = speed_from_curvature(kappa, a_y_max)
+  follow_cap = acc_following_cap(lead_vehicle_state)
+  final_target_speed = min(planner_speed, legal_cap, comfort_cap, follow_cap)
+
+  target_accelは final_target_speed への収束率から決定し、
+  phaseは sign(target_accel) により ACCEL / CRUISE / DECEL を出力する。
+```
+
+### 横G・ヨーレート・ジャーク制約
+
+最新の学習ベースPlannerでも、最終的な車両入力は物理量で監視する。Converterでは、軌跡由来の曲率だけでなく、実車状態のヨーレートも使って横Gを二重に評価する。
+
+```text
+横加速度（横G）:
+  a_y_plan = v_target^2 * kappa_target
+  a_y_meas = ego_speed * ego_yaw_rate
+  a_y_eval = max(|a_y_plan|, |a_y_meas|)
+
+制約:
+  a_y_eval <= A_Y_MAX
+  例: 快適域 2.0〜3.0 m/s^2、緊急回避時のみ上限を別管理
+```
+
+```text
+縦ジャーク:
+  jerk_x = (target_accel - prev_target_accel) / dt
+
+横ジャーク:
+  jerk_y = (a_y_eval - prev_a_y_eval) / dt
+
+制約:
+  |jerk_x| <= JERK_X_MAX
+  |jerk_y| <= JERK_Y_MAX
+
+処理:
+  - target_accel を jerk limit で平滑化
+  - kappa / steer_angle を rate limit で平滑化
+  - 制約超過が残る場合は target_speed を下げる
+  - それでも不可能なら feasibility_ok=False とし、External Evaluatorへ戻す
+```
+
+```python
+def apply_dynamics_constraints(kappa, target_speed, target_accel, ego_state, dt):
+    a_y_plan = target_speed**2 * kappa
+    a_y_meas = ego_state.speed * ego_state.yaw_rate
+    a_y_eval = max(abs(a_y_plan), abs(a_y_meas))
+
+    if a_y_eval > A_Y_MAX:
+        target_speed = min(target_speed, sqrt(A_Y_MAX / max(abs(kappa), 1e-4)))
+
+    target_accel = clamp_rate(
+        target_accel,
+        prev_value=prev_target_accel,
+        max_rate=JERK_X_MAX,
+        dt=dt,
+    )
+
+    jerk_y = (a_y_eval - prev_a_y_eval) / dt
+    if abs(jerk_y) > JERK_Y_MAX:
+        kappa = clamp_rate(kappa, prev_kappa, KAPPA_RATE_MAX, dt)
+
+    return kappa, target_speed, target_accel
+```
+
 ---
 
 ## 7.13 ログするべき値
@@ -318,8 +405,13 @@ Plannerへの利用:
   actual_steer_angle (EPSフィードバック)
   steer_error = target - actual
   target_speed
+  target_accel
+  speed_phase
   actual_speed
   a_y = speed^2 * kappa
+  a_y_meas = speed * yaw_rate
+  jerk_x
+  jerk_y
   feasibility_ok
   fallback_active
   infeasible_reason (if any)

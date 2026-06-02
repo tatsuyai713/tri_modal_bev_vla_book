@@ -74,6 +74,37 @@ Example:
   Input: "Stop by that convenience store"
   NLU: {action: "stop", location: "nearby_poi", poi_type: "convenience_store"}
   -> DSL -> Planner
+
+### Speed Constraint Inputs (Map, Perception, and User GUI)
+
+Besides language tokens, speed planning should consume explicit speed-constraint tokens.
+
+```text
+T_speed_map (navigation map):
+  - legal_speed_limit_mps
+  - school_zone_speed_limit_mps
+  - construction_zone_speed_limit_mps
+  - map_confidence
+
+T_speed_env (perception):
+  - sign_speed_limit_mps
+  - road_mark_speed_limit_mps
+  - detection_confidence
+  - ttl_frames
+
+T_user_pref (user GUI):
+  - overspeed_tolerance_mps
+  - profile_mode (eco / normal / assertive)
+  - hard_cap_enabled
+```
+
+```text
+Design rules:
+  - Never exceed the legal limit.
+  - User tolerance is allowed only as an operational margin within policy.
+  - Conflicts among map/sign/road-marking are resolved conservatively,
+    then finalized by the external evaluator.
+```
 ```
 
 ---
@@ -133,6 +164,7 @@ Decoder (4-6 layers):
     - Cross-attention over Agent future tokens
     - Cross-attention over Dynamic Risk tokens
     - Cross-attention over CondFormer output
+    - Speed profile head (v, a_x, phase)
     - FFN
 ```
 
@@ -147,6 +179,11 @@ trajectories: [B, K, T, D]
 confidence: [B, K]
   - Learned "preference" score for each candidate
   - Not a safety probability (safety is judged by the external evaluator)
+
+speed_profiles: [B, K, T, 3]
+  - (v_target, a_x_target, phase) per timestep
+  - phase in {ACCEL, CRUISE, DECEL}
+  - Generated jointly with trajectories and sent to the Converter
 ```
 
 ### Meaning of Confidence
@@ -157,6 +194,26 @@ confidence = how close the model predicts this candidate is to a human trajector
 
 -> Safety is checked separately by the external evaluator
 -> confidence must not be used as a safety guarantee
+```
+
+### Evolution Architecture: DiffusionDrive (§6.10)
+
+```text
+The K-query Planner is well-suited for MVP/Phase 1 due to its implementation
+simplicity and low computational cost. After confirming stable operation,
+consider migrating to DiffusionDrive when the following conditions are met:
+
+  K-query Planner strengths:
+    - Generates K candidates in a single forward pass; simple to implement
+    - MHP Loss is intuitive and easy to debug
+    - Standard Transformer architecture; smaller GPU memory footprint
+
+  Conditions to consider migration to DiffusionDrive:
+    - Rare scenarios not covered by K fixed candidates arise frequently
+    - Need to improve longitudinal precision (stop profiles, IDM, curve speed)
+    - Richer candidate diversity desired for External Evaluator safety selection
+
+  See §6.10 for the full DiffusionDrive design.
 ```
 
 ---
@@ -199,10 +256,12 @@ The External Evaluator evaluates the K candidates:
 Inputs:
   - K candidate trajectories
   - Static World (drivable, occupancy, stopline, crosswalk)
+  - Traffic light tokens (state, confidence, controlled_lane_ids)
   - Dynamic Risk Map
   - Agent Futures
   - ODD status
   - confidence [B, K]
+  - speed constraints from map/sign/road-marking/user settings
 
 Checks:
   1. Static collision check (overlap with non-drivable area or occupied area)
@@ -210,9 +269,32 @@ Checks:
   3. Lane violation check (outside drivable area)
   4. Speed limit check (legal speed vs speed profile)
   5. Advisory speed check (LaneNode.advisory_speed_mps vs speed profile)
-  6. Comfort check (trajectory curvature vs lane curvature profile, acceleration limits)
-  7. Stopline check (whether the vehicle stops beyond the stop line)
-  8. ODD check (localization accuracy, sensor health)
+  6. Comfort check (trajectory curvature vs lane curvature profile, lateral-G, acceleration, jerk limits)
+  7. Traffic light check (whether signal state is consistent with maneuver direction)
+  8. Stopline precision check (whether stopping occurs within the allowed zone before the stop line)
+  9. Following stop gap check (whether stopped gap to the lead vehicle is within target range)
+  10. ODD check (localization accuracy, sensor health)
+  11. Final rule-based speed check
+
+Final rule-based speed check:
+  legal_limit = min(valid_map_limit, valid_sign_limit, valid_road_mark_limit)
+  user_margin = clamp(user_overspeed_tolerance, 0, policy_margin_max)
+  operational_cap = min(legal_limit, legal_limit + user_margin)
+  Any candidate with v_target(t) > operational_cap is marked Fail.
+
+Dynamics comfort check:
+  a_y_plan(t) = v_target(t)^2 * kappa(t)
+  a_y_meas(t) = ego_speed(t) * ego_yaw_rate(t)
+  jerk_x(t) = delta a_x(t) / delta t
+  jerk_y(t) = delta a_y(t) / delta t
+  Candidates exceeding lateral-G or jerk limits are marked Fail or heavily down-scored.
+
+Signal / stop precision check:
+  On RED or without a valid directional ARROW, candidates crossing the stop line are Fail.
+  On YELLOW, stop if within stopping distance; otherwise avoid harsh braking inside the intersection.
+  stop_position_error = planned_stop_x - target_stop_x
+  Candidates with |stop_position_error| outside tolerance are down-scored or marked Fail.
+  When following a stopped lead vehicle, candidates with actual_stop_gap below desired_stop_gap are Fail.
 
 Selection logic:
   - Among candidates that pass all checks, select the one with the highest confidence

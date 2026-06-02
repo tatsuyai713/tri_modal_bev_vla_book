@@ -32,7 +32,7 @@ Principle 5: Observe Learning Curves Before Advancing to the Next Stage
 
 ---
 
-## D.2 Six-Stage Training Plan
+## D.2 Seven-Stage Training Plan
 
 | Stage | Target Modules | Data | Frozen Range |
 |---|---|---|---|
@@ -41,7 +41,8 @@ Principle 5: Observe Learning Curves Before Advancing to the Next Stage
 | Stage 3 | K-query Planner | Human trajectory data | Stage 1+2 frozen |
 | Stage 4 | External Language Conditioning | Language + trajectory data | Stage 1+2 frozen, only CondFormer updated |
 | Stage 5 | Internal Scene Tokenizer | VLM teacher data | Stage 1+2+3 frozen |
-| Stage 6 | Joint Fine-tuning | All data mixed | All modules trainable (low LR) |
+| Stage 6 | Closed-loop / Offline RL Speed Policy Fine-tuning | Simulator + curated real logs | Freeze world/perception, update planner speed branch |
+| Stage 7 | Joint Fine-tuning | All data mixed | All modules trainable (low LR) |
 
 ---
 
@@ -235,7 +236,48 @@ Notes:
 
 ---
 
-## D.8 Stage 6: Joint Fine-tuning
+## D.8 Stage 6: Closed-loop / Offline RL Speed Policy Fine-tuning
+
+```text
+Objective:
+  Learn predictive speed behavior that imitation-only training often misses,
+  such as decelerate-before-curve -> steady-in-curve -> gradual acceleration-on-exit.
+
+Positioning:
+  The current research trend is not real-vehicle online RL.
+  It is large-scale IL as the base, combined with closed-loop evaluation,
+  offline RL, and constrained objectives.
+
+Updated modules:
+  - Planner speed branch (v/a_x/phase head)
+  - Optional: speed-constraint attention in CondFormer
+
+Frozen modules:
+  - BEV encoder / world heads / evaluator
+
+Example reward:
+  r = w_progress * progress
+    - w_jerk * |jerk|
+    - w_lat * ReLU(v^2*kappa - a_y_max)
+    - w_yaw * ReLU(|v*yaw_rate| - a_y_max)
+    - w_stop * |stop_position_error|
+    - w_gap * |actual_stop_gap - desired_stop_gap|
+    - w_signal * signal_violation
+    - w_rule * overspeed_violation
+    - w_risk * collision_or_high_risk
+
+Notes:
+  - Keep speed-violation penalty high.
+  - Evaluate lateral G using both v^2*kappa and v*yaw_rate.
+  - Include longitudinal and lateral jerk constraints in both reward and evaluator checks.
+  - Include stopline precision, stopped following gap, and signal compliance in both reward and evaluator checks.
+  - Reward only behavior consistent with the final rule-based speed evaluator.
+  - Require scenario regression tests (curves, merges, stop lines) before deployment.
+```
+
+---
+
+## D.9 Stage 7: Joint Fine-tuning
 
 ```text
 Final stage: all modules trained simultaneously at a low learning rate.
@@ -248,7 +290,7 @@ Freezing Strategy:
   - Scene Tokenizer: low LR (3e-5)
 
 Loss:
-  L_joint = L_stage2 + L_stage3 + L_stage4 + L_stage5 (weighted sum of each loss)
+  L_joint = L_stage2 + L_stage3 + L_stage4 + L_stage5 + L_stage6 (weighted sum of each loss)
 
 Notes:
   - Joint Fine-tuning assumes each module has already converged
@@ -263,7 +305,7 @@ Training Configuration:
 
 ---
 
-## D.9 OSS Weight Reuse Guide (Per Module)
+## D.10 OSS Weight Reuse Guide (Per Module)
 
 ### BEVFusion -> BEV Encoder (Camera + LiDAR)
 
@@ -308,27 +350,27 @@ model.text_encoder.load_state_dict(lang_state_dict, strict=False)
 
 ---
 
-## D.10 Freeze/Train Table by Module
+## D.11 Freeze/Train Table by Module
 
-| Module | Stage1 | Stage2 | Stage3 | Stage4 | Stage5 | Stage6 |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Camera Backbone | Train | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
-| LiDAR Pillar Encoder | Train | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
-| BEV Encoder (Fusion) | Train | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
-| Temporal BEV Memory | Train | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
-| BEV Heads | - | Train | Frozen | Frozen | Frozen | Train(low LR) |
-| Dynamic Object Head | - | Train | Frozen | Frozen | Frozen | Train(low LR) |
-| Agent Future Predictor | - | Train | Frozen | Frozen | Frozen | Train(low LR) |
-| Lane Topology Encoder | - | Train | Frozen | Frozen | Frozen | Train(low LR) |
-| Text Encoder | - | - | - | Train | Frozen | Train(low LR) |
-| CondFormer | - | - | Train(simple) | Train | Frozen | Train |
-| Planner Queries (K) | - | - | Train | Frozen | Frozen | Train |
-| VLA Planner Decoder | - | - | Train | Frozen | Frozen | Train |
-| Scene Tokenizer | - | - | - | - | Train | Train(low LR) |
+| Module | Stage1 | Stage2 | Stage3 | Stage4 | Stage5 | Stage6 | Stage7 |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Camera Backbone | Train | Frozen | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
+| LiDAR Pillar Encoder | Train | Frozen | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
+| BEV Encoder (Fusion) | Train | Frozen | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
+| Temporal BEV Memory | Train | Frozen | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
+| BEV Heads | - | Train | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
+| Dynamic Object Head | - | Train | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
+| Agent Future Predictor | - | Train | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
+| Lane Topology Encoder | - | Train | Frozen | Frozen | Frozen | Frozen | Train(low LR) |
+| Text Encoder | - | - | - | Train | Frozen | Frozen | Train(low LR) |
+| CondFormer | - | - | Train(simple) | Train | Frozen | Train(speed constraints only) | Train |
+| Planner Queries (K) | - | - | Train | Frozen | Frozen | Train(speed-focused) | Train |
+| VLA Planner Decoder | - | - | Train | Frozen | Frozen | Train(speed branch only) | Train |
+| Scene Tokenizer | - | - | - | - | Train | Frozen | Train(low LR) |
 
 ---
 
-## D.11 Heuristic Label Generation for Parked/Static/Dynamic
+## D.12 Heuristic Label Generation for Parked/Static/Dynamic
 
 Training Agent Futures requires distinguishing between moving objects, stopped vehicles, and parked vehicles.
 
@@ -359,7 +401,7 @@ def classify_agent_motion(agent_track: list) -> str:
 
 ---
 
-## D.12 Building Agent Relevance Teacher Signal
+## D.13 Building Agent Relevance Teacher Signal
 
 Teacher signal for weighting agents the Planner should attend to.
 
@@ -386,7 +428,7 @@ def compute_agent_relevance(ego_trajectory, agent_state) -> float:
 
 ---
 
-## D.13 Low-Cost Training Configuration (R9700 + 32GB RAM)
+## D.14 Low-Cost Training Configuration (R9700 + 32GB RAM)
 
 Practical training configuration when available GPU is limited.
 
@@ -428,7 +470,7 @@ Example command:
 
 ---
 
-## D.14 Warm Start Pattern Comparison
+## D.15 Warm Start Pattern Comparison
 
 | Strategy | Initial Accuracy | Training Time | Risk | Recommended |
 |---|---|---|---|---|
@@ -441,7 +483,7 @@ Example command:
 
 ---
 
-## D.15 Recommended Hybrid Route
+## D.16 Recommended Hybrid Route
 
 ```text
 Step 1: Load BEVFusion (MIT) weights -> use for Camera + LiDAR BEV Encoder
@@ -450,12 +492,13 @@ Step 3: Stage 2: Fine-tune BEV Heads with nuScenes + in-house data
 Step 4: Stage 3: Train Planner with human trajectory data
 Step 5: Stage 4: Train CondFormer with language data
 Step 6: Stage 5: Train Scene Tokenizer with VLM teacher data (optional)
-Step 7: Stage 6: Joint Fine-tuning (low LR)
+Step 7: Stage 6: Closed-loop / Offline RL Speed Policy Fine-tuning
+Step 8: Stage 7: Joint Fine-tuning (low LR)
 ```
 
 ---
 
-## D.16 Notes on Using Published Checkpoints
+## D.17 Notes on Using Published Checkpoints
 
 ```text
 Notes when using public checkpoints:
@@ -493,12 +536,12 @@ Example verification code:
 
 ---
 
-## D.17 Appendix D Summary
+## D.18 Appendix D Summary
 
 ```text
 Elements designed in this appendix:
   1. Overall training policy (5 principles)
-  2. Six-stage training plan (Backbone->Heads->Planner->Language->Scene->Joint)
+  2. Seven-stage training plan (Backbone->Heads->Planner->Language->Scene->RL->Joint)
   3. Details of each stage (loss functions, training settings, warm start sources)
   4. OSS weight reuse guide (BEVFusion/UniAD/DriveLM)
   5. Freeze/Train table (all modules x all stages)

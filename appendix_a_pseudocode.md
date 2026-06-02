@@ -229,7 +229,7 @@ class TriModalBEVVLAPlanner(nn.Module):
         # Step 9: K-query VLA Planner
         # ============================================================
         
-        K = 8  # 候補数
+        K = 8  # 候補数（発展時は DiffusionDrive で M=16〜32 サンプル、§6.10 参照）
         
         # K個のクエリを使ったTransformer Decoder
         # agent_futures: Agent Detection → Agent Future Predictor で得た将来軌跡候補

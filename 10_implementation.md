@@ -161,6 +161,7 @@ class SensorPacket:
     radar_points: torch.Tensor    # [B, N_sweeps, N_rpts, D_r]
     ego_state: EgoState
     calibration: CalibrationData
+    speed_constraints: "SpeedConstraintInputs"
     timestamp_ns: int
 
 @dataclass
@@ -246,6 +247,17 @@ class StaticWorldOutputs:
     bev_lane: torch.Tensor       # [B, H, W, C]
     bev_stopline: torch.Tensor   # [B, H, W]
     bev_crosswalk: torch.Tensor  # [B, H, W]
+    traffic_lights: List["TrafficLightState"]
+
+@dataclass
+class TrafficLightState:
+    bbox: tuple                     # 2D/3D候補。実装で型を固定
+    state: str                      # "RED" / "YELLOW" / "GREEN" / "ARROW" / "UNKNOWN"
+    confidence: float
+    controlled_lane_ids: List[str]
+    controlled_stopline_id: str
+    arrow_direction: str            # "left" / "right" / "straight" / "none"
+    time_since_seen_ms: float
 
 @dataclass
 class DynamicWorldOutputs:
@@ -300,6 +312,15 @@ class LaneTopologyOutputs:
     target_lane_sequence: List[str]
     ego_pose_in_lane_graph: EgoPoseInLaneGraph
     map_mismatch_score: float
+
+@dataclass
+class SpeedConstraintInputs:
+    map_speed_limit_mps: float
+    sign_speed_limit_mps: float
+    road_mark_speed_limit_mps: float
+    source_confidence: Dict[str, float]   # {"map":..., "sign":..., "road_mark":...}
+    user_overspeed_tolerance_mps: float
+    policy_margin_max_mps: float
 ```
 
 ---
@@ -334,6 +355,8 @@ class SelectedTrajectory:
 class ControlCommand:
     target_curvature: float      # 1/m
     target_speed: float          # m/s
+    target_accel: float          # m/s^2
+    speed_phase: str             # "ACCEL" / "CRUISE" / "DECEL"
     target_steer_angle: float    # rad (optional, vehicle-specific)
     
     limit_steer: bool = False    # 舵角制限が発動したか

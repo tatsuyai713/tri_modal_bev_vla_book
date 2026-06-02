@@ -48,6 +48,8 @@
 | Converter | - | Deterministic module that converts trajectories to steering angle |
 | Evaluator | - | External module that evaluates the safety of K candidate trajectories and selects one |
 | K candidates | K candidate trajectories | K trajectories generated in parallel by the Planner |
+| K-query VLA Planner | - | Transformer Decoder-based trajectory generation Planner with K learnable queries. MVP implementation trained with MHP Loss |
+| DiffusionDrive | - | Trajectory generation via conditional diffusion model (NVIDIA, NeurIPS 2024). Adopted as the evolution of K-query Planner |
 | Fallback | - | Safe alternative action used when normal planning fails |
 | TTC | Time-to-Collision | Estimated time until collision |
 | THW | Time Headway | Time gap to the vehicle ahead |
