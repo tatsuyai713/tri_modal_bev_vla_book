@@ -284,12 +284,12 @@ Stage 5: Scene Tokenizer 学習（オプション）
   固定:   Stage 1+2+3
   更新:   Scene Tokenizer（VLM 知識蒸留）
 
-Stage 6: DiffusionDrive Phase A/B/C — 発展学習（K-query 安定後） (Ch.6 §6.10)
-  前提:   Stage 3 の K-query Planner が安定稼働していること
-  データ: 大規模ログ（Phase A）+ Waymax/CARLA + 厳選実車ログ（Phase B/C）
+Stage 6: Closed-loop / Offline RL — 速度方策 Fine-tuning (App.D §D.8)
+  データ: Waymax / CARLA + 厳選実車ログ
   固定:   World Heads / Perception
-  更新:   DiffusionDrive denoising network（K-query の weights を初期値として転用可）
-  制約:   C_1..C_4 (Lagrangian CMDP) ← External Evaluator フラグをそのまま流用
+  更新:   K-query Planner 速度分岐（v/a_x/phase head）
+  目的:   人間模倣だけでは獲得しづらい「予見的減速→旋回→加速」を閉ループで獲得
+  ※ DiffusionDrive への移行はオプション（§6.10 Phase A/B/C 参照）
 
 Stage 7: Joint Fine-tuning
   データ: 全データ混合
